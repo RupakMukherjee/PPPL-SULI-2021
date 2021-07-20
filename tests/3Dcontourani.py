@@ -1,6 +1,5 @@
 import sys
 import numpy as np
-from random import random
 from numpy import cos, pi
 from numpy.lib.polynomial import polyint
 from skimage.measure import marching_cubes_lewiner
@@ -28,22 +27,18 @@ nx = round((xmax - xmin)/dx + 1)
 
 
 def updateplt(frame):
-    print(frame)
-    
     coords = []
-    filename = "Data/fort.%d" % (frame)
+    filename = "Data/fort.%d" % (10*frame)
+    #print(filename)
     with open(filename) as f:
         for line in f:
             coords.append(list(map(float, line.split())))
-    #dens[i][j][k] gives density at (i,j,k)
-    dens = np.reshape(np.array(coords)[:, 3], (nx, ny, nz))
-    xcoords = np.linspace(xmin, xmax, nx)
-    ycoords = np.linspace(ymin, ymax, ny)
-    zcoords = np.linspace(zmin, zmax, nz)
-    #thresholdDensity=1.45e20
-    thresholdDensity = 1e20
 
-    verts, faces, _, _ = marching_cubes_lewiner(dens, thresholdDensity, spacing=(1, 1, 1))
+    dens = np.reshape(np.array(coords)[:, 3], (nx, ny, nz))
+    #iso_val=1.45e20
+    iso_val = 1e20
+
+    verts, faces, _, _ = marching_cubes_lewiner(dens, iso_val, spacing=(1, 1, 1))
     verts[:, 0] = dx*verts[:, 0] + xmin
     verts[:, 1] = dy*verts[:, 1] + ymin
     verts[:, 2] = dz*verts[:, 2] + zmin
@@ -71,12 +66,12 @@ def updateplt(frame):
     for l in verts:
         tup = ()
         for t in l:
-            #t = round(t, 6)
-            t = np.float32(t)
+            t = round(t, 6)
             tup = tup + (t,)
         vert.append(tup)
+    #verts = vert
     vertdict = {j:i for i,j in enumerate(vert)} #vert to index
-    
+
     for f in faces: 
         a, b, c = f
         #if (a == b) or (b == c) or (c == a): #deletes degen triangles, not needed for large data size
@@ -95,6 +90,7 @@ def updateplt(frame):
             edgedict[b].append(a)
         else:
             edgedict[b] = [a]
+
     def isBlob(verts, edges, faces):
         #checking Euler's formula F+V= E+2 
         #Euler's formula works for planar objects
@@ -116,17 +112,6 @@ def updateplt(frame):
     #triangles_arr = triangles.reshape(triangles.shape[0], -1)
     #np.savetxt('triangle.txt', triangles_arr, fmt = '%10.5f')
 
-    def interpTestPoint(xWeight,yWeight,zWeight, dx,dy,dz,probeDensity):
-        testDensity000 = probeDensity[0,0,0] * (dx-xWeight) * (dy-yWeight) * (dz-zWeight)
-        testDensity001 = probeDensity[0,0,1] * (dx-xWeight) * (dy-yWeight) * zWeight
-        testDensity010 = probeDensity[0,1,0] * xWeight * (dy-yWeight) * (dz-zWeight)
-        testDensity011 = probeDensity[0,1,1] * xWeight * (dy-yWeight) * (dz-zWeight)
-        testDensity100 = probeDensity[1,0,0] * (dx-xWeight) * yWeight * (dz-zWeight)
-        testDensity101 = probeDensity[1,0,1] * (dx-xWeight) * yWeight * zWeight
-        testDensity110 = probeDensity[1,1,0] * xWeight * yWeight * (dz-zWeight)
-        testDensity111 = probeDensity[1,1,1] * xWeight * yWeight * zWeight
-        testDensity = ( testDensity000 + testDensity001 + testDensity010 + testDensity011 + testDensity100 + testDensity101 + testDensity110 + testDensity111 ) / (dx*dy*dz)
-        return testDensity
 
     def inTri2D(p1, p2, p3, p):
         """
@@ -216,6 +201,7 @@ def updateplt(frame):
             return True
         else:
             return False
+
     def isInside(verts, faces, point):
         """
         Can only intersect each point once.
@@ -239,24 +225,18 @@ def updateplt(frame):
                     continue
                 #print(type(x))
                 if intpoint in verts: #If hits vertex, sees if counts or not
-                    surround = edgedict[np.where(verts == intpoint)[0][0]] #dfs to determine contour polygon
+                    surround = edgedict[vertdict[intpoint]] #dfs to determine contour polygon
                     unvisited = set(surround.copy())
                     first = surround[0]
                     current = first
                     contour = []
-                    b = 0
                     for j in range(len(surround)-1):
-                        contour.append(verts[current][1:])
+                        contour.append(current[1:])
                         unvisited.remove(current)
-                        next = list(set(edgedict[current]) & set(unvisited))
-                        if next != []: next = next[0]
-                        else:  
-                            b = 1
-                            break
+                        next = list(set(edgedict[current]) & set(unvisited))[0]
                         current = next
-                    if b == 1: break
-                    contour.append(verts[next][1:])
-                    contour.append(verts[first][1:])
+                    contour.append(next[1:])
+                    contour.append(first[1:])
                     if isInside2D(contour, intpoint[1:]):
                         count += 1
                 else: 
@@ -294,6 +274,7 @@ def updateplt(frame):
             current = {unvisited.pop()}
             blob = set()
             while True:
+            #for i in range(5):
                 next = set()
                 for node in current.copy():
                     next.update(edgedict[node])
@@ -313,60 +294,10 @@ def updateplt(frame):
 
     ax.clear()
     plot = None
-    #plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
-    blob_counter = 0
     for b in separateBlobs():
-        vertind, edges, faces = b
-        #plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
-        vertcoords = verts[vertind]
-        x = vertcoords[:,0]
-        y = vertcoords[:,1]
-        z = vertcoords[:,2]
-        x_min = np.min(x)
-        x_max = np.max(x)
-        y_min = np.min(y)
-        y_max = np.max(y)
-        z_min = np.min(z)
-        z_max = np.max(z)
-        numTrial = 100
-        blobConfidence = 0
-        insideTrialPoints = 0
-        for numT in range(numTrial):
-            xT = x_min + (x_max-x_min)*random()
-            yT = y_min + (y_max-y_min)*random()
-            zT = z_min + (z_max-z_min)*random()
-            #print("Trial point",numT,"with",round(xT,4),round(yT,4),'for contour number %d'%j)
-            trialPoint = (xT,yT, zT)
-            if isInside(verts, faces, trialPoint):
-                insideTrialPoints = insideTrialPoints + 1
-                #print("Trial point", numT, "is INSIDE for contour number %d"%j)
-                idx = int((xT-xmin)/dx)
-                idy = int((yT-ymin)/dy)
-                idz = int((zT-zmin)/dz)
-                probeDensity = dens[idx:idx+2, idy:idy+2, idz:idz+2]
-
-                xWeight = abs(xcoords[idx]-xT)
-                yWeight = abs(ycoords[idy]-yT)
-                zWeight = abs(zcoords[idz]-zT)
-                testDensity = interpTestPoint(xWeight,yWeight,zWeight, dx,dy,dz, probeDensity)
-                if (testDensity >= thresholdDensity):
-                    #print("Interpolated point",numT,"with",round(xInterp,4),round(yInterp,4)," for Contour number %d"%j+" is INSIDE & truly a BLOB! Yeyy...")
-                    blobConfidence = blobConfidence + 1
-                else:
-                        None
-            else:
-                None
-                #print("Trial point", numT, " lies Outside before interpolation")
-        #print(blobConfidence, insideTrialPoints)
-        if insideTrialPoints > 0:
-            confidence = blobConfidence/insideTrialPoints
-        else:
-            print("no points inside")
-            confidence = 0
-        #print("Confidence = ",confidence*100,"%")
-        if (confidence > 0.50):
-            blob_counter = blob_counter + 1
-            plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
+        vertind, __, faces = b
+        #faces = list(faces)
+        plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
     ax.set_xlabel('x axis')
     ax.set_ylabel('y axis')
     ax.set_zlabel('z axis')
@@ -403,8 +334,6 @@ ax.view_init(elev=200, azim=250)
 
 ani = animation.FuncAnimation(fig, updateplt, 100, interval=1000/fps)
 writergif = animation.PillowWriter(fps=fps)
-ani.save('3Dcontourani1.gif',writer=writergif)
+ani.save('3Dcontourani.gif',writer=writergif)
 #plt.show()
 #print(verts[faces])
-
-
