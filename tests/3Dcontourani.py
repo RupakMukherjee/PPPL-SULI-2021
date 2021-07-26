@@ -1,5 +1,6 @@
 import sys
 import numpy as np
+import math
 from random import random
 from numpy import cos, pi
 from numpy.lib.polynomial import polyint
@@ -25,6 +26,11 @@ dy = coords[nz][1] - ymin
 ny = round((ymax - ymin)/dy + 1)
 dx = coords[ny*nz][0]-xmin
 nx = round((xmax - xmin)/dx + 1)
+
+framecount = 100
+blobframe = [[] for i in range(framecount)]
+bloblist = []
+
 
 
 def updateplt(frame):
@@ -116,7 +122,18 @@ def updateplt(frame):
     #triangles_arr = triangles.reshape(triangles.shape[0], -1)
     #np.savetxt('triangle.txt', triangles_arr, fmt = '%10.5f')
 
-    def interpTestPoint(xWeight,yWeight,zWeight, dx,dy,dz,probeDensity):
+    def interpTestPoint(point):
+        x, y, z = point
+        idx = int((x-xmin)/dx)
+        idy = int((y-ymin)/dy)
+        idz = int((z-zmin)/dz)
+
+        probeDensity = dens[idx:idx+2, idy:idy+2, idz:idz+2]
+
+        xWeight = abs(xcoords[idx]-x)
+        yWeight = abs(ycoords[idy]-y)
+        zWeight = abs(zcoords[idz]-z)
+
         testDensity000 = probeDensity[0,0,0] * (dx-xWeight) * (dy-yWeight) * (dz-zWeight)
         testDensity001 = probeDensity[0,0,1] * (dx-xWeight) * (dy-yWeight) * zWeight
         testDensity010 = probeDensity[0,1,0] * xWeight * (dy-yWeight) * (dz-zWeight)
@@ -127,6 +144,58 @@ def updateplt(frame):
         testDensity111 = probeDensity[1,1,1] * xWeight * yWeight * zWeight
         testDensity = ( testDensity000 + testDensity001 + testDensity010 + testDensity011 + testDensity100 + testDensity101 + testDensity110 + testDensity111 ) / (dx*dy*dz)
         return testDensity
+    class Blob:
+        def __init__(self, verts, vertind, edges, faces):
+            self.verts = verts
+            self.vertind = vertind
+            self.edges = edges
+            self.faces = faces
+            vertcoords = verts[vertind]
+            self.vertcoords = vertcoords
+            V = len(vertind)
+            xcom = 0
+            ycom = 0
+            zcom = 0
+            denscom = 0
+            for v in vertcoords:
+                vx, vy, vz = v
+                vdens = interpTestPoint(v)
+                denscom += vdens
+                xcom += vdens*vx
+                ycom += vdens*vy
+                zcom += vdens*vz
+            self.xcom = xcom/denscom
+            self.ycom = ycom/denscom
+            self.zcom = zcom/denscom
+            self.com = (self.xcom, self.ycom, self.zcom)
+            x = vertcoords[:,0]
+            y = vertcoords[:,1]
+            z = vertcoords[:,2]
+            self.x_min = np.min(x)
+            self.x_max = np.max(x)
+            self.y_min = np.min(y)
+            self.y_max = np.max(y)
+            self.z_min = np.min(z)
+            self.z_max = np.max(z)
+            self.xrange = self.x_max-self.x_min
+            self.yrange = self.y_max-self.y_min
+            self.zrange = self.z_max-self.z_min
+            self.id = None
+        
+        def set_id(self, id):
+            self.id = id
+        
+        def get_id(self):
+            return self.id
+    
+        def is_close(self, blob):
+            distThreshold = 0
+            rangeThreshold = 0
+            bool1 = math.dist(self.com, blob.com) < distThreshold
+            bool2 = math.dist([self.xrange], [blob.xrange]) < rangeThreshold
+            bool3 = math.dist([self.yrange], [blob.xrange]) < rangeThreshold
+            bool4 = math.dist([self.zrange], [blob.xrange]) < rangeThreshold
+            return all([bool1, bool2, bool3, bool4])
 
     def inTri2D(p1, p2, p3, p):
         """
@@ -303,20 +372,23 @@ def updateplt(frame):
                 current = next
                 if current == set():
                     #Blob finished
-                    blobs.append(list(blob))
+                    blob = list(blob)
+                    blobs.append(blob)
+                    v, e, f = findVEF(blob)
+                    if isBlob(v, e, f):
+                        blobVEF.append(Blob(verts, v, e, f))
                     break
-        for b in blobs:
-            v, e, f = findVEF(b)
-            if isBlob(v, e, f):
-                blobVEF.append((v, e, f))
         return blobVEF
 
     ax.clear()
     plot = None
     #plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
     blob_counter = 0
-    for b in separateBlobs():
-        vertind, edges, faces = b
+    blobs = separateBlobs()
+    blobframe[frame] = blobs
+    for b in blobs:
+        #print(b.com)
+        vertind, edges, faces = (b.vertind, b.edges, b.faces)
         #plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
         vertcoords = verts[vertind]
         x = vertcoords[:,0]
@@ -340,15 +412,7 @@ def updateplt(frame):
             if isInside(verts, faces, trialPoint):
                 insideTrialPoints = insideTrialPoints + 1
                 #print("Trial point", numT, "is INSIDE for contour number %d"%j)
-                idx = int((xT-xmin)/dx)
-                idy = int((yT-ymin)/dy)
-                idz = int((zT-zmin)/dz)
-                probeDensity = dens[idx:idx+2, idy:idy+2, idz:idz+2]
-
-                xWeight = abs(xcoords[idx]-xT)
-                yWeight = abs(ycoords[idy]-yT)
-                zWeight = abs(zcoords[idz]-zT)
-                testDensity = interpTestPoint(xWeight,yWeight,zWeight, dx,dy,dz, probeDensity)
+                testDensity = interpTestPoint(trialPoint)
                 if (testDensity >= thresholdDensity):
                     #print("Interpolated point",numT,"with",round(xInterp,4),round(yInterp,4)," for Contour number %d"%j+" is INSIDE & truly a BLOB! Yeyy...")
                     blobConfidence = blobConfidence + 1
@@ -364,9 +428,24 @@ def updateplt(frame):
             print("no points inside")
             confidence = 0
         #print("Confidence = ",confidence*100,"%")
-        if (confidence > 0.50):
+        if (confidence > 0):
             blob_counter = blob_counter + 1
+            bool0 = True
+            if frame == 0: 
+                previousblobs = []
+            else:
+                previousblobs = blobframe[frame-1]
+            for prev in previousblobs:
+                if b.is_close(prev):
+                    b.set_id(prev.id)
+                    bloblist[prev.id].append(b)
+                    bool0 = False
+                    break
+            if bool0:
+                bloblist.append([b])
+                b.set_id(len(bloblist)-1)
             plot = ax.plot_trisurf(verts[:, 0], verts[:,1], faces, verts[:, 2], cmap='Spectral', lw=3)
+    print(bloblist)
     ax.set_xlabel('x axis')
     ax.set_ylabel('y axis')
     ax.set_zlabel('z axis')
@@ -390,7 +469,6 @@ def updateplt(frame):
     ax.scatter(*point)
     #print(type(point[1]))
     #print(isInside(verts, faces, point))
-
 #Graphing
 fps = 5
 fig = plt.figure()
@@ -401,10 +479,13 @@ ax.set_box_aspect((2, 6, 1))
 #ax.plot(verts[:, 0], verts[:,1], verts[:, 2], 'bo') #plots vertices
 ax.view_init(elev=200, azim=250)
 
-ani = animation.FuncAnimation(fig, updateplt, 100, interval=1000/fps)
+updateplt(50)
+updateplt(51)
+print(blobframe)
+#ani = animation.FuncAnimation(fig, updateplt, 100, interval=1000/fps)
 writergif = animation.PillowWriter(fps=fps)
-ani.save('3Dcontourani1.gif',writer=writergif)
-#plt.show()
+#ani.save('3Dcontourani1.gif',writer=writergif)
+plt.show()
 #print(verts[faces])
 
 
